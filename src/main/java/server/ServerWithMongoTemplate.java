@@ -44,13 +44,13 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
         socketWriter = new ConcurrentSkipListMap<>();
 
         ConnectionString connString = new ConnectionString(
-                "mongodb+srv://software:MyReminder@cluster0.cb2w0.mongodb.net/Software?w=majority");
+                "mongodb+srv://software:MyReminder@cluster0.cb2w0.mongodb.net");
         MongoClientSettings settings = MongoClientSettings.builder().applyConnectionString(connString).retryWrites(true)
                 .build();
         MongoClient mongoClient = MongoClients.create(settings);
         MongoDatabase database = mongoClient.getDatabase("Software");
         users = database.getCollection("Users");
-        users = database.getCollection("Events");
+        events = database.getCollection("Events");
 
         // Caching process
 
@@ -120,9 +120,8 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
                             answerInvitation(event, output);
                             break;
                         case "FORGOTTEN PASSWORD":
-                            User aux;
                             user = (User) input.readObject();
-                            String name;
+                            System.out.println(user);
                             Document userWithMail = users.find(Filters.eq("_id", user.getMail())).first();
                             final Gson gson = new Gson();
                             final User userInstance = gson.fromJson(userWithMail.toJson(), User.class);
@@ -131,8 +130,8 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
                                 Document userWithName = users.find(Filters.eq("name", userInstance.getName())).first();
                                 final User auxUser = gson.fromJson(userWithName.toJson(), User.class);
                                 if (userInstance.getDni().equals(auxUser.getDni())) {
-                                    users.findOneAndUpdate(Filters.eq("_id", user.getMail()),
-                                            new Document("password", user.getPassword()));
+                                    users.updateOne(Filters.eq("_id", user.getMail()),
+                                            new Document("$set", new Document("password", user.getPassword())));
                                 }
                             }
                         default:
@@ -164,17 +163,19 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
         Document existingUser = users
                 .find(Filters.or(Filters.eq("_id", user.getMail()), Filters.eq("name", user.getName()))).first();
         final Gson gson = new Gson();
-        final User userInstance = gson.fromJson(existingUser.toJson(), User.class);
+        final User userInstance = existingUser != null ? gson.fromJson(existingUser.toJson(), User.class) : null;
         if (userInstance != null) {
             output.writeObject("Sign up: Error. User already exists");
         } else {
             // _id = email
             Document userDocument = Document.parse(gson.toJson(user));
-            userDocument.remove("email");
+            userDocument.remove("mail");
             userDocument.append("_id", user.getMail());
-            // Guardar eventos como Array asi la db sabe que hay un campo events tipo array
-            Event events[] = {};
-            userDocument.append("events", events);
+            // // Guardar eventos como Array asi la db sabe que hay un campo events tipo
+            // array
+            userDocument.append("events", new ArrayList<>());
+            System.out.println(userDocument);
+
             users.insertOne(userDocument);
             output.writeObject("Sign up: OK");
         }
@@ -183,7 +184,7 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
     private void signIn(User user, ObjectOutputStream output) throws IOException {
         Document existingUser = users.find(Filters.eq("name", user.getName())).first();
         final Gson gson = new Gson();
-        final User userInstance = gson.fromJson(existingUser.toJson(), User.class);
+        final User userInstance = existingUser != null ? gson.fromJson(existingUser.toJson(), User.class) : null;
         if (userInstance == null) {
             output.writeObject("Sign in: Error. User doesn't exist");
         } else {
@@ -205,7 +206,8 @@ public class ServerWithMongoTemplate extends MultiThreadServer implements Runnab
         final User userInstance = gson.fromJson(existingUser.toJson(), User.class);
         userInstance.putEvent(event);
 
-        events.insertOne(Document.parse(gson.toJson(event)));
+        Document eventDoc = Document.parse(gson.toJson(event));
+        events.insertOne(eventDoc);
 
         output.writeObject("Create event: OK");
         output.writeObject(event);
